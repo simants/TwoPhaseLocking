@@ -5,6 +5,8 @@ from Constants import TRANSACTION_STATUS, RESOURCE_STATUS
 from Transaction import Transaction
 from Lock import Lock
 
+#Comment From krishna
+
 def parse_input(line):
     if re.match("b|e\d", line):
         return [line[0], int(re.findall("\d", line)[0])]
