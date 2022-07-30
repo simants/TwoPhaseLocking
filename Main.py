@@ -1,11 +1,9 @@
 import sys
 import re
 
-from Constants import TRANSACTION_STATUS, RESOURCE_STATUS
+from Constants import TRANSACTION_STATUS, RESOURCE_STATUS, OPERATIONS
 from Transaction import Transaction
 from Lock import Lock
-
-#Comment From krishna
 
 def parse_input(line):
     if re.match("b|e\d", line):
@@ -26,12 +24,23 @@ class Main:
         self.transaction_id = None  # Current transaction in action
         self.resource = None  # Current resource / item in action
 
+    # Function to get message prefix
+    def get_prefix(self):
+
+        if self.resource != None:
+            return f'{self.operation}{self.transaction_id}({self.resource});'
+        else:
+            return f'{self.operation}{self.transaction_id};'
+
+
     # Function to begin a new transaction
     def begin(self):
 
         if self.transaction_id not in self.TRANSACTION_TABLE:
             self.TRANSACTION_TABLE[self.transaction_id] = Transaction(self.transaction_id, self.transaction_timestamp)
             self.transaction_timestamp += 1
+            self.write_to_file(f'{self.get_prefix()} T{self.transaction_id} begins. {self.TRANSACTION_TABLE[self.transaction_id]}.\n')
+                
 
     def start_execution(self, file_input_list):
 
@@ -43,23 +52,85 @@ class Main:
             self.execute()
 
     def execute(self, operation=None):
-        if self.operation == 'b':
+
+        if self.operation == OPERATIONS.get('BEGIN'):
             self.begin()
-
-        elif self.operation == 'r':
-            self.read_lock()
-
-        elif self.operation == 'w':
-            self.write_lock()
-
-        elif self.operation == 'e':
+        
+        elif self.operation == OPERATIONS.get('END'):
             self.commit()
 
-    def read_lock(self):
-        pass
+        else:
+            #Check for aborted / completed transactions
+            if self.TRANSACTION_TABLE[self.transaction_id].transaction_state in ['committed', 'aborted']:
+                pass
+            elif self.operation == OPERATIONS.get('READ'):
+                self.read_lock(operation)
+            
+            elif self.operation == OPERATIONS.get('WRITE'):
+                self.write_lock()
 
-    def write_lock(self):
-        pass
+        for key in self.LOCK_TABLE:
+            print(f'LOCK_TABLE:- {key} : {self.LOCK_TABLE[key]}')
+        
+        for key in self.TRANSACTION_TABLE:
+            print(f'TRANSACTION_TABLE:- {key} : {self.TRANSACTION_TABLE[key]}')
+
+    def read_lock(self, operation=None):
+
+        #Check if resource is already present in LOCK_TABLE
+        if self.resource in self.LOCK_TABLE:
+            
+            if self.LOCK_TABLE[self.resource].resource_state == RESOURCE_STATUS.get('WRITE_LOCKED'):
+                # Conflict due to write lock on resource, calling wait-die to resolve
+                self.wait_die(self.transaction_id, self.LOCK_TABLE[self.resource].lock_list[0], 'WRITE_LOCKED')
+            else:
+                # Transation issues read lock
+                self.write_to_file(f'{self.get_prefix()} {self.resource} is read locked by T{self.transaction_id}.\n')
+
+                # Check if transaction is active or resumed
+                if self.TRANSACTION_TABLE[self.transaction_id].transaction_state == TRANSACTION_STATUS.get('ACTIVE'):
+                    if self.resource not in self.TRANSACTION_TABLE[self.transaction_id].resource_hold:
+                        self.TRANSACTION_TABLE[self.transaction_id].resource_hold.append(self.resource)
+                elif self.TRANSACTION_TABLE[self.transaction_id].transaction_state == TRANSACTION_STATUS.get('BLOCKED'):
+                    self.TRANSACTION_TABLE[self.transaction_id].transaction_state = TRANSACTION_STATUS.get('ACTIVE')
+                
+                # Add transaction id to resource's lock_list
+                if self.transaction_id not in self.LOCK_TABLE[self.resource].lock_list:
+                    self.LOCK_TABLE[self.resource].lock_list.append(self.transaction_id)
+                    self.LOCK_TABLE[self.resource].resource_state = RESOURCE_STATUS.get('READ_LOCKED')
+                if operation and operation in self.TRANSACTION_TABLE[self.transaction_id].waiting:
+                    self.TRANSACTION_TABLE[self.transaction_id].waiting.remove(operation)
+        else:
+            # Transation issues read lock
+            self.write_to_file(f'{self.get_prefix()} {self.resource} is read locked by T{self.transaction_id}.\n')
+            if self.resource not in self.TRANSACTION_TABLE[self.transaction_id].resource_hold:
+                self.TRANSACTION_TABLE[self.transaction_id].resource_hold.append(self.resource)
+            self.LOCK_TABLE[self.resource] = Lock(self.resource, RESOURCE_STATUS.get('READ_LOCKED'))
+            self.LOCK_TABLE[self.resource].lock_list.append(self.transaction_id)
+
+    def write_lock(self, operation=None):
+        #Check if resource is already present in LOCK_TABLE
+        if self.resource in self.LOCK_TABLE:
+
+            # Check for lock state (Read or Write)
+            if self.LOCK_TABLE[self.resource].resource_state == RESOURCE_STATUS.get('READ_LOCKED'):
+                # Transaction upgrades to write lock 
+                # if it is the only transaction holding read lock
+                if len(self.LOCK_TABLE[self.resource].lock_list) == 1:
+                    if self.LOCK_TABLE[self.resource].lock_list[0] == self.transaction_id:
+                        self.write_to_file(f'{self.get_prefix()} read lock on {self.resource} by T{self.transaction_id} is upgraded to write lock.\n')
+                        self.LOCK_TABLE[self.resource].resource_state = RESOURCE_STATUS.get('WRITE_LOCKED')
+                else:
+                    # Multiple transactions holding read lock, call wait-die to resolve conflict
+                    self.wait_die(self.transaction_id, self.LOCK_TABLE[self.resource].lock_list[0], 'READ_LOCKED')
+                                
+
+                # Decide if to check for active / blocked
+            
+            elif self.LOCK_TABLE[self.resource].resource_state == RESOURCE_STATUS.get('WRITE_LOCKED'):
+                pass
+
+
 
     def commmit(self):
         pass
@@ -67,11 +138,31 @@ class Main:
     def unlock_resource(self, resource_list):
         pass
 
-    def wait_die(self, requesting_id, holding_id, resource):
+    def abort(self):
         pass
 
+    def wait_die(self, requesting_id, holding_id,  resource_state):
+        
+        # Elder transaction is blocked if waiting for resource locked by younger transaction
+        # Operation is added to transaction's waiting list
+        # Transaction Id added to Lock table under resource;s waiting list
+        if self.TRANSACTION_TABLE[requesting_id].time_stamp < self.TRANSACTION_TABLE[holding_id].time_stamp:
+            self.write_to_file(f'{self.get_prefix()} T{requesting_id} is blocked/waiting due to wait-die.\n')
+            self.TRANSACTION_TABLE[requesting_id].waiting.append((self.operation, self.transaction_id, self.resource))
+            self.TRANSACTION_TABLE[requesting_id].transaction_state = TRANSACTION_STATUS.get('BLOCKED')
+            if requesting_id not in self.LOCK_TABLE[self.resource].wait_list:
+                self.LOCK_TABLE[self.resource].wait_list.append(requesting_id)
+        # Younger transaction dies if requesting resource locked by elder transaction
+        else:
+            self.write_to_file(f'{self.get_prefix()} T{requesting_id} is aborted due to wait-die.\n')
+            # Abort younger transaction and release locks 
+            self.abort()
+            if requesting_id not in self.LOCK_TABLE[self.resource].lock_list:
+                self.LOCK_TABLE[self.resource].lock_list.append(requesting_id)
+                self.LOCK_TABLE[self.resource].resource_state = RESOURCE_STATUS.get(resource_state)
+
     def write_to_file(self, input):
-        output_file = open(sys.argv[2], 'w')
+        output_file = open(sys.argv[2], 'a')
         output_file.write(input)
         output_file.close()
 

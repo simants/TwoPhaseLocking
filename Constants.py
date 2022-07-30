@@ -1,11 +1,18 @@
 TRANSACTION_STATUS = {
-    'ACTIVE': 'ACTIVE',
-    'BLOCKED': 'BLOCKED',
-    'COMMITTED': 'COMMITTED',
-    'ABORTED': 'ABORTED'
+    'ACTIVE': 'active',
+    'BLOCKED': 'blocked',
+    'COMMITTED': 'committed',
+    'ABORTED': 'aborted'
 }
 
 RESOURCE_STATUS = {
-    'READ_LOCKED': 'READ_LOCKED',
-    'WRITE_LOCKED': 'WRITE_LOCKED'
+    'READ_LOCKED': 'read_locked',
+    'WRITE_LOCKED': 'write_locked'
+}
+
+OPERATIONS = {
+    'BEGIN': 'b',
+    'READ': 'r',
+    'WRITE': 'w',
+    'END': 'e'
 }
