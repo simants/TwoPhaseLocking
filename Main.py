@@ -1,3 +1,4 @@
+from copy import deepcopy
 import sys
 import re
 
@@ -16,7 +17,7 @@ def parse_input(line):
 
 class Main:
 
-    def __init__(self) -> None:
+    def __init__(self):
         self.TRANSACTION_TABLE = {}
         self.LOCK_TABLE = {}
         self.transaction_timestamp = 1
@@ -32,7 +33,6 @@ class Main:
         else:
             return f'{self.operation}{self.transaction_id};'
 
-
     # Function to begin a new transaction
     def begin(self):
 
@@ -41,14 +41,12 @@ class Main:
             self.transaction_timestamp += 1
             self.write_to_file(f'{self.get_prefix()} T{self.transaction_id} begins. {self.TRANSACTION_TABLE[self.transaction_id]}.\n')
                 
-
     def start_execution(self, file_input_list):
 
         for input in file_input_list:
             self.operation = input[0]
             self.transaction_id = input[1]
             self.resource = input[2] if len(input) > 2 else None
-
             self.execute()
 
     def execute(self, operation=None):
@@ -123,23 +121,42 @@ class Main:
                 else:
                     # Multiple transactions holding read lock, call wait-die to resolve conflict
                     self.wait_die(self.transaction_id, self.LOCK_TABLE[self.resource].lock_list[0], 'READ_LOCKED')
-                                
-
-                # Decide if to check for active / blocked
-            
+                
             elif self.LOCK_TABLE[self.resource].resource_state == RESOURCE_STATUS.get('WRITE_LOCKED'):
-                pass
-
-
-
+                #Conflic due to write lock, call wait-die to resolve
+                self.wait_die(self.transaction_id, self.LOCK_TABLE[self.resource].lock_list[0], 'WRITE_LOCKED')
+    
     def commmit(self):
         pass
 
-    def unlock_resource(self, resource_list):
+    def unlock_resource(self, resource):
         pass
 
-    def abort(self):
-        pass
+    def abort(self, transaction_id):
+        
+        self.write_to_file(f'{self.get_prefix()} T{transaction_id} aborted due to wait-die')
+
+        resource_list = deepcopy(self.TRANSACTION_TABLE[transaction_id].resource_hold)
+
+        # Unlock resources locked by the transaction
+        for resource in resource_list:
+            self.TRANSACTION_TABLE[transaction_id].resource_hold.remove(resource)
+            if transaction_id in self.LOCK_TABLE[resource].lock_list:
+                self.unlock_resource(resource)
+
+            # Resume BLOCKED transactions
+            if self.LOCK_TABLE[resource].wait_list:
+                waiting_id = self.LOCK_TABLE[resource].wait_list.pop(0)
+                waiting_operations = deepcopy(self.TRANSACTION_TABLE[waiting_id].waiting)
+                for operation in waiting_operations:
+                    self.TRANSACTION_TABLE[waiting_id].waiting.remove(operation)
+                    self.operation = operation[0]
+                    self.transaction_id = operation[1]
+                    self.resource = operation[2]
+
+                    self.execute()
+        
+        del self.TRANSACTION_TABLE[transaction_id]
 
     def wait_die(self, requesting_id, holding_id,  resource_state):
         
@@ -168,7 +185,6 @@ class Main:
 
 if len(sys.argv) < 3:
     print('Input given is wrong.\n Expected input: file_name <input.txt> <output.txt>')
-
 
 file_input = []
 
