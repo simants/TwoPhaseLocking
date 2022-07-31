@@ -1,3 +1,4 @@
+# output1.txt
 b1; T1 begins. Id=1. TS=1. state=active.
 r1(Y); Y is read locked by T1.
 r1(Z); Z is read locked by T1.

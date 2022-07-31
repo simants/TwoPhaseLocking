@@ -1,4 +1,3 @@
-
 b1; T1 begins. Id=1. TS=1. state=active.
 r1(Y); Y is read locked by T1.
 w1(Y); read lock on Y by T1 is upgraded to write lock.
