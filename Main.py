@@ -129,7 +129,8 @@ class Main:
                     self.wait_die(self.transaction_id, self.LOCK_TABLE[self.resource].lock_list[0], 'READ_LOCKED')
 
             elif self.LOCK_TABLE[self.resource].resource_state == RESOURCE_STATUS.get('WRITE_LOCKED'):
-                pass
+                #Conflic due to write lock, call wait-die to resolve
+                self.wait_die(self.transaction_id, self.LOCK_TABLE[self.resource].lock_list[0], 'WRITE_LOCKED')
 
     def commmit(self, transaction_id):
 
