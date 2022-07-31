@@ -13,9 +13,7 @@ def parse_input(line):
         return [line[0], int(re.findall("\d", line)[0])]
 
     elif re.match('r|w\d\s*\([A-Z a-z]?\)', line):
-        return [line[0],
-                int(re.findall("\d+", line)[0]),
-                re.findall('[A-Z a-z]?', line.split("(")[1])[0]]
+        return [line[0],int(re.findall("\d+", line)[0]),re.findall('[A-Z a-z]?', line.split("(")[1])[0]]
 
 
 class Main:
@@ -43,8 +41,7 @@ class Main:
             self.TRANSACTION_TABLE[self.transaction_id] = Transaction(self.transaction_id, self.transaction_timestamp)
             self.transaction_timestamp += 1
 
-            self.write_to_file(
-                f'{self.get_prefix()} T{self.transaction_id} begins. {self.TRANSACTION_TABLE[self.transaction_id]}.\n')
+            self.write_to_file(f'{self.get_prefix()} T{self.transaction_id} begins. {self.TRANSACTION_TABLE[self.transaction_id]}.\n')
 
     def start_execution(self, file_input_list):
 
@@ -54,38 +51,36 @@ class Main:
             self.resource = input[2] if len(input) > 2 else None
             self.execute()
 
-    def execute(self, operation=None):
+    def execute(self, resume=False):
 
         if self.operation == OPERATIONS.get('BEGIN'):
             self.begin()
+        
+        elif self.TRANSACTION_TABLE[self.transaction_id].transaction_state == TRANSACTION_STATUS['ABORTED']:
+            self.write_to_file(f'{self.get_prefix()} T{self.transaction_id} is already aborted.\n')
+
+        elif self.operation == OPERATIONS.get('READ'):
+            self.read_lock(resume)
+
+        elif self.operation == OPERATIONS.get('WRITE'):
+            self.write_lock(resume)
 
         elif self.operation == OPERATIONS.get('END'):
-            self.commit()
+            self.commit(self.transaction_id, resume)
 
-        else:
-            # Check for aborted / completed transactions
-            if self.TRANSACTION_TABLE[self.transaction_id].transaction_state in ['committed', 'aborted']:
-                pass
-            elif self.operation == OPERATIONS.get('READ'):
-                self.read_lock(operation)
+    def read_lock(self, resume=False):
 
-            elif self.operation == OPERATIONS.get('WRITE'):
-                self.write_lock()
-
-        for key in self.LOCK_TABLE:
-            print(f'LOCK_TABLE:- {key} : {self.LOCK_TABLE[key]}')
-
-        for key in self.TRANSACTION_TABLE:
-            print(f'TRANSACTION_TABLE:- {key} : {self.TRANSACTION_TABLE[key]}')
-
-    def read_lock(self, operation=None):
-
+        # Check if transaction is resumed or not
+        if not resume and self.TRANSACTION_TABLE[self.transaction_id].transaction_state == TRANSACTION_STATUS['BLOCKED']:
+            self.TRANSACTION_TABLE[self.transaction_id].waiting.append((self.operation, self.transaction_id, self.resource))
+            self.write_to_file(f'{self.get_prefix()} {self.get_prefix()} for T{self.transaction_id} is added to waiting list.\n')
+                    
         # Check if resource is already present in LOCK_TABLE
-        if self.resource in self.LOCK_TABLE:
+        elif self.resource in self.LOCK_TABLE:
 
             if self.LOCK_TABLE[self.resource].resource_state == RESOURCE_STATUS.get('WRITE_LOCKED'):
                 # Conflict due to write lock on resource, calling wait-die to resolve
-                self.wait_die(self.transaction_id, self.LOCK_TABLE[self.resource].lock_list[0], 'WRITE_LOCKED')
+                self.wait_die(self.transaction_id, self.LOCK_TABLE[self.resource].lock_list[-1], 'WRITE_LOCKED')
             else:
                 # Transation issues read lock
                 self.write_to_file(f'{self.get_prefix()} {self.resource} is read locked by T{self.transaction_id}.\n')
@@ -101,8 +96,6 @@ class Main:
                 if self.transaction_id not in self.LOCK_TABLE[self.resource].lock_list:
                     self.LOCK_TABLE[self.resource].lock_list.append(self.transaction_id)
                     self.LOCK_TABLE[self.resource].resource_state = RESOURCE_STATUS.get('READ_LOCKED')
-                if operation and operation in self.TRANSACTION_TABLE[self.transaction_id].waiting:
-                    self.TRANSACTION_TABLE[self.transaction_id].waiting.remove(operation)
         else:
             # Transation issues read lock
             self.write_to_file(f'{self.get_prefix()} {self.resource} is read locked by T{self.transaction_id}.\n')
@@ -111,9 +104,15 @@ class Main:
             self.LOCK_TABLE[self.resource] = Lock(self.resource, RESOURCE_STATUS.get('READ_LOCKED'))
             self.LOCK_TABLE[self.resource].lock_list.append(self.transaction_id)
 
-    def write_lock(self, operation=None):
+    def write_lock(self, resume=False):
+
+        # Check if transaction is resumed or not
+        if not resume and self.TRANSACTION_TABLE[self.transaction_id].transaction_state == TRANSACTION_STATUS['BLOCKED']:
+            self.TRANSACTION_TABLE[self.transaction_id].waiting.append((self.operation, self.transaction_id, self.resource))
+            self.write_to_file(f'{self.get_prefix()} {self.get_prefix()} for T{self.transaction_id} is added to waiting list.\n')
+
         # Check if resource is already present in LOCK_TABLE
-        if self.resource in self.LOCK_TABLE:
+        elif self.resource in self.LOCK_TABLE:
 
             # Check for lock state (Read or Write)
             if self.LOCK_TABLE[self.resource].resource_state == RESOURCE_STATUS.get('READ_LOCKED'):
@@ -124,18 +123,31 @@ class Main:
                         self.write_to_file(
                             f'{self.get_prefix()} read lock on {self.resource} by T{self.transaction_id} is upgraded to write lock.\n')
                         self.LOCK_TABLE[self.resource].resource_state = RESOURCE_STATUS.get('WRITE_LOCKED')
+
+                        # Check if transaction is active or resumed
+                        if self.TRANSACTION_TABLE[self.transaction_id].transaction_state == TRANSACTION_STATUS.get('ACTIVE'):
+                            if self.resource not in self.TRANSACTION_TABLE[self.transaction_id].resource_hold:
+                                self.TRANSACTION_TABLE[self.transaction_id].resource_hold.append(self.resource)
+                        elif self.TRANSACTION_TABLE[self.transaction_id].transaction_state == TRANSACTION_STATUS.get('BLOCKED'):
+                            self.TRANSACTION_TABLE[self.transaction_id].transaction_state = TRANSACTION_STATUS.get('ACTIVE')
                 else:
                     # Multiple transactions holding read lock, call wait-die to resolve conflict
-                    self.wait_die(self.transaction_id, self.LOCK_TABLE[self.resource].lock_list[0], 'READ_LOCKED')
+                    self.wait_die(self.transaction_id, self.LOCK_TABLE[self.resource].lock_list[-1], 'READ_LOCKED')
 
             elif self.LOCK_TABLE[self.resource].resource_state == RESOURCE_STATUS.get('WRITE_LOCKED'):
-                #Conflic due to write lock, call wait-die to resolve
-                self.wait_die(self.transaction_id, self.LOCK_TABLE[self.resource].lock_list[0], 'WRITE_LOCKED')
+                #Conflict due to write lock, call wait-die to resolve
+                self.wait_die(self.transaction_id, self.LOCK_TABLE[self.resource].lock_list[-1], 'WRITE_LOCKED')
 
-    def commmit(self, transaction_id):
+    def commit(self, transaction_id, resume=False):
+
+        # Check if transaction is resumed or not
+        if not resume and self.TRANSACTION_TABLE[self.transaction_id].transaction_state == TRANSACTION_STATUS['BLOCKED']:
+            self.TRANSACTION_TABLE[self.transaction_id].waiting.append((self.operation, self.transaction_id, self.resource))
+            self.write_to_file(f'{self.get_prefix()} Comitting T{self.transaction_id} is added to waiting list.\n')
+            return None
 
         self.write_to_file(f'{self.get_prefix()} T{self.transaction_id} is committed.\n')
-
+        
         resource_release = deepcopy(self.TRANSACTION_TABLE[transaction_id].resource_hold)
         for resource in resource_release:
             self.TRANSACTION_TABLE[transaction_id].resource_hold.remove(resource)
@@ -145,28 +157,26 @@ class Main:
         for resource in resource_release:
             if self.LOCK_TABLE[resource].wait_list:
                 transaction_waiting = self.LOCK_TABLE[resource].wait_list.pop(0)
-                resume_message = f'T{transaction_waiting} resumed operation from wait-list for resource {resource}'
-                print(resume_message)
                 waiting_operations = deepcopy(self.TRANSACTION_TABLE[transaction_waiting].waiting)
                 for operation in waiting_operations:
                     self.TRANSACTION_TABLE[transaction_waiting].waiting.remove(operation)
                     self.operation = operation[0]
                     self.transaction_id = operation[1]
-                    self.resource = operation[3]
-                    self.execute()
+                    self.resource = operation[2]
+                    self.execute(resume=True)
 
-        del self.TRANSACTION_TABLE[transaction_id]
+        self.TRANSACTION_TABLE[transaction_id].reset('COMMITTED')
 
     def unlock_resource(self, resource):
         self.LOCK_TABLE[resource].lock_list.remove(self.transaction_id)
         if len(self.LOCK_TABLE[resource].lock_list) > 0:
-            self.LOCK_TABLE[resource].resource_state = self.RESOURCE_STATUS.get('READ_LOCKED')
+            self.LOCK_TABLE[resource].resource_state = RESOURCE_STATUS.get('READ_LOCKED')
         else:
-            del self.LOCK_TABLE[resource]
+            self.LOCK_TABLE[resource].resource_state = None
 
     def abort(self, transaction_id):
         
-        self.write_to_file(f'{self.get_prefix()} T{transaction_id} aborted due to wait-die')
+        self.write_to_file(f'{self.get_prefix()} T{transaction_id} aborted due to wait-die.\n')
 
         resource_list = deepcopy(self.TRANSACTION_TABLE[transaction_id].resource_hold)
 
@@ -180,15 +190,16 @@ class Main:
             if self.LOCK_TABLE[resource].wait_list:
                 waiting_id = self.LOCK_TABLE[resource].wait_list.pop(0)
                 waiting_operations = deepcopy(self.TRANSACTION_TABLE[waiting_id].waiting)
+                
                 for operation in waiting_operations:
                     self.TRANSACTION_TABLE[waiting_id].waiting.remove(operation)
                     self.operation = operation[0]
                     self.transaction_id = operation[1]
                     self.resource = operation[2]
 
-                    self.execute()
+                    self.execute(resume=True)
         
-        del self.TRANSACTION_TABLE[transaction_id]
+        self.TRANSACTION_TABLE[transaction_id].reset('ABORTED')
 
     def wait_die(self, requesting_id, holding_id, resource_state):
 
@@ -199,16 +210,17 @@ class Main:
             self.write_to_file(f'{self.get_prefix()} T{requesting_id} is blocked/waiting due to wait-die.\n')
             self.TRANSACTION_TABLE[requesting_id].waiting.append((self.operation, self.transaction_id, self.resource))
             self.TRANSACTION_TABLE[requesting_id].transaction_state = TRANSACTION_STATUS.get('BLOCKED')
-            if requesting_id not in self.LOCK_TABLE[self.resource].wait_list:
+            if self.resource and requesting_id not in self.LOCK_TABLE[self.resource].wait_list:
                 self.LOCK_TABLE[self.resource].wait_list.append(requesting_id)
         # Younger transaction dies if requesting resource locked by elder transaction
         else:
-            self.write_to_file(f'{self.get_prefix()} T{requesting_id} is aborted due to wait-die.\n')
-            # Abort younger transaction and release locks 
-            self.abort()
-            if requesting_id not in self.LOCK_TABLE[self.resource].lock_list:
+            
+            if self.resource and requesting_id not in self.LOCK_TABLE[self.resource].lock_list:
                 self.LOCK_TABLE[self.resource].lock_list.append(requesting_id)
                 self.LOCK_TABLE[self.resource].resource_state = RESOURCE_STATUS.get(resource_state)
+            
+            # Abort younger transaction and release locks 
+            self.abort(self.transaction_id)
 
     def write_to_file(self, input):
         output_file = open(sys.argv[2], 'a')
@@ -225,5 +237,6 @@ with open(sys.argv[1], 'rt') as input:
     lines = input.readlines()
     for line in lines:
         file_input.append(parse_input(line))
+input.close()
 
 Main().start_execution(file_input)

@@ -10,3 +10,8 @@ class Transaction:
     
     def __str__(self) -> str:
         return f"Id={self.transaction_id}. TS={self.time_stamp}. state={self.transaction_state}"
+
+    def reset(self, transaction_state):
+        self.resource_hold = []
+        self.waiting = []
+        self.transaction_state = TRANSACTION_STATUS.get(transaction_state)
